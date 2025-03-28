@@ -18,8 +18,8 @@ def read_version():
 __version__ = read_version()
 
 # get project long description
-with open("README.md", "r", encoding="utf-8") as fh:
-    long_description = fh.read()
+# setup.py
+long_description = "Nomeroff Net - система распознавания автомобильных номеров"
 
 # get project requirements list
 with open("requirements.txt", "r", encoding="utf-8") as fh:

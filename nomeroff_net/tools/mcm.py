@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 from modelhub_client import ModelHub
-CONFIGS_DIR = Path(__file__).parent.parent.parent.parent.parent.parent / "src/data/configs/"
+CONFIGS_DIR = Path("/app/src/data/configs/")
 model_config_urls = [
     # numberplate classification
     f"{os.path.join(CONFIGS_DIR, 'all/model_efficientnet_v2_s-400x100-7.json')}",

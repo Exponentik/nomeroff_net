@@ -1,5 +1,5 @@
 """
-python3 -m nomeroff_net.pipes.number_plate_text_readers.base.ocr -f nomeroff_net/text_detectors/base/ocr.py
+python3 -m OCR.pipes.number_plate_text_readers.base.ocr -f OCR/text_detectors/base/ocr.py
 """
 import os
 import io
@@ -8,6 +8,7 @@ import json
 import numpy as np
 import torch
 import pytorch_lightning as pl
+from pathlib import Path
 
 from collections import Counter
 from torch.nn import functional
@@ -16,16 +17,16 @@ from typing import List, Tuple, Any, Dict
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.callbacks import LearningRateMonitor
 from torchvision import models
-from nomeroff_net.data_modules.numberplate_ocr_data_module import OcrNetDataModule
-from nomeroff_net.nnmodels.ocr_model import NPOcrNet, weights_init
+from OCR.data_modules.numberplate_ocr_data_module import OcrNetDataModule
+from OCR.nnmodels.ocr_model import NPOcrNet, weights_init
 
-from nomeroff_net.tools.image_processing import normalize_img
-from nomeroff_net.tools.errors import OCRError
-from nomeroff_net.tools.mcm import modelhub, get_device_torch
-from nomeroff_net.tools.augmentations import aug_seed
-from nomeroff_net.tools.ocr_tools import (StrLabelConverter,
-                                          decode_prediction,
-                                          decode_batch)
+from OCR.tools.image_processing import normalize_img
+from OCR.tools.errors import OCRError
+from OCR.tools.mcm import modelhub, get_device_torch
+from OCR.tools.augmentations import aug_seed
+from OCR.tools.ocr_tools import (StrLabelConverter,
+                                 decode_prediction,
+                                 decode_batch)
 
 device_torch = get_device_torch()
 
@@ -182,6 +183,7 @@ class OCR(object):
             pl.seed_everything(seed)
         if self.model is None:
             self.create_model()
+        self.model.train()
         checkpoint_callback = ModelCheckpoint(dirpath=log_dir, monitor='val_loss')
         lr_monitor = LearningRateMonitor(logging_interval='step')
         if self.gpus:
@@ -300,31 +302,33 @@ class OCR(object):
 
     def load_model(self, path_to_model, nn_class=NPOcrNet):
         self.path_to_model = path_to_model
-        # Load the checkpoint
-        checkpoint = torch.load(path_to_model, map_location=torch.device('cpu'))
+        normalized_path = Path(self.path_to_model).resolve()
 
-        # Add a fake pytorch-lightning_version key to the checkpoint if it doesn't exist
-        if 'pytorch-lightning_version' not in checkpoint:
-            checkpoint['pytorch-lightning_version'] = pl.__version__
+        # Загружаем только state_dict вместо полного checkpoint
+        checkpoint = torch.load(normalized_path, map_location=torch.device('cpu'))
 
-        # Save the modified checkpoint to an in-memory buffer
-        buffer = io.BytesIO()
-        torch.save(checkpoint, buffer)
-        buffer.seek(0)
+        # Создаем экземпляр модели с нужными параметрами
+        self.model = nn_class(
+            letters=self.letters,
+            linear_size=self.linear_size,
+            hidden_size=self.hidden_size,
+            backbone=self.backbone,
+            letters_max=len(self.letters) + 1,
+            label_converter=self.label_converter,
+            height=self.height,
+            width=self.width,
+            color_channels=self.color_channels,
+            max_text_len=self.max_text_len
+        )
 
-        self.model = nn_class.load_from_checkpoint(buffer,
-                                                   map_location=torch.device('cpu'),
-                                                   letters=self.letters,
-                                                   linear_size=self.linear_size,
-                                                   hidden_size=self.hidden_size,
-                                                   backbone=self.backbone,
-                                                   letters_max=len(self.letters) + 1,
-                                                   label_converter=self.label_converter,
-                                                   height=self.height,
-                                                   width=self.width,
-                                                   color_channels=self.color_channels,
-                                                   max_text_len=self.max_text_len,
-                                                   **{'pytorch_lightning_version': '0.0.0'})
+        # Загружаем веса модели
+        if 'state_dict' in checkpoint:
+            # Для checkpoint'ов pytorch-lightning
+            self.model.load_state_dict(checkpoint['state_dict'])
+        else:
+            # Для обычных сохраненных моделей
+            self.model.load_state_dict(checkpoint)
+
         self.model = self.model.to(device_torch)
         self.model.eval()
         return self.model
@@ -382,10 +386,10 @@ class OCR(object):
         logits_lens = torch.full(size=(batch_size,), fill_value=input_len, dtype=torch.int32)
 
         acc = functional.ctc_loss(
-            logits,
-            encoded_texts,
+            logits.to(device),
+            encoded_texts.to(device),
             logits_lens.to(device),
-            text_lens
+            text_lens.to(device)
         )
         return 1 - acc / len(self.letters)
     
